@@ -1,21 +1,24 @@
-// If you edit this file, you must also edit its tests.
-// For tests of this and the entire plume package, see class TestPlume.
+// If you edit this file, you must also edit its tests in class TestReflectionP.
 
 package org.plumelib.reflection;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.util.HashMap;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
-import java.util.StringJoiner;
+import java.util.Map;
 import java.util.StringTokenizer;
+import java.util.concurrent.ConcurrentHashMap;
 import org.checkerframework.checker.interning.qual.Interned;
+import org.checkerframework.checker.modifiability.qual.Modifiable;
+import org.checkerframework.checker.mustcall.qual.MustCallUnknown;
+import org.checkerframework.checker.mustcall.qual.PolyMustCall;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -27,27 +30,27 @@ import org.checkerframework.checker.signature.qual.FullyQualifiedName;
 import org.checkerframework.dataflow.qual.Pure;
 
 /** Utility functions related to reflection, Class, Method, ClassLoader, and classpath. */
-public final class ReflectionPlume {
+public final class ReflectionP {
 
   /** This class is a collection of methods; it does not represent anything. */
-  private ReflectionPlume() {
-    throw new Error("do not instantiate");
+  private ReflectionP() {
+    throw new UnsupportedOperationException("do not instantiate");
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Class
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // Class
+  //
 
   /**
-   * Return true iff sub is a subtype of sup. If sub == sup, then sub is considered a subtype of sub
-   * and this method returns true.
+   * Returns true iff sub is a subtype of sup. If sub == sup, then sub is considered a subtype of
+   * sup and this method returns true.
    *
    * @param sub class to test for being a subtype
    * @param sup class to test for being a supertype
    * @return true iff sub is a subtype of sup
    */
   @SuppressWarnings({
-    "allcheckers:purity.not.deterministic.call", // getInterfaces() is used as a set
+    "allcheckers:purity.call", // getInterfaces() is used as a set
     "allcheckers:method.guarantee.violated" // getInterfaces() is used as a set
   })
   @Pure
@@ -64,7 +67,6 @@ public final class ReflectionPlume {
     }
 
     // Handle interfaces
-    @SuppressWarnings({"lock:method.guarantee.violated"}) // order doesn't matter
     Class<?>[] interfaces = sub.getInterfaces();
     for (Class<?> ifc : interfaces) {
       if (ifc == sup || isSubtype(ifc, sup)) {
@@ -76,18 +78,17 @@ public final class ReflectionPlume {
   }
 
   /** Used by {@link #classForName}. */
-  private static HashMap<String, Class<?>> primitiveClasses = new HashMap<>(8);
-
-  static {
-    primitiveClasses.put("boolean", Boolean.TYPE);
-    primitiveClasses.put("byte", Byte.TYPE);
-    primitiveClasses.put("char", Character.TYPE);
-    primitiveClasses.put("double", Double.TYPE);
-    primitiveClasses.put("float", Float.TYPE);
-    primitiveClasses.put("int", Integer.TYPE);
-    primitiveClasses.put("long", Long.TYPE);
-    primitiveClasses.put("short", Short.TYPE);
-  }
+  // @SuppressWarnings("PMD.FieldDeclarationsShouldBeAtStartOfClass") // field used by one method
+  private static final Map<String, Class<?>> PRIMITIVE_CLASSES =
+      Map.of(
+          "boolean", Boolean.TYPE,
+          "byte", Byte.TYPE,
+          "char", Character.TYPE,
+          "double", Double.TYPE,
+          "float", Float.TYPE,
+          "int", Integer.TYPE,
+          "long", Long.TYPE,
+          "short", Short.TYPE);
 
   // TODO: Should create a method that handles any ClassGetName (including primitives), but not
   // fully-qualified names.  A routine with a polymorphic parameter type is confusing.
@@ -97,9 +98,9 @@ public final class ReflectionPlume {
    * fully-qualified name (in addition to a binary name).
    *
    * <p>If the given name can't be found, this method changes the last '.' to a dollar sign ($) and
-   * tries again. This accounts for inner classes that are incorrectly passed in in fully-qualified
-   * format instead of binary format. (It should try multiple dollar signs, not just at the last
-   * position.)
+   * tries again, repeating with successive dots (from right to left) until the class is found or no
+   * dots remain. This accounts for inner classes that are incorrectly passed in fully-qualified
+   * format instead of binary format.
    *
    * <p>Recall the rather odd specification for {@link Class#forName(String)}: the argument is a
    * binary name for non-arrays, but a field descriptor for arrays. This method uses the same rules,
@@ -109,11 +110,12 @@ public final class ReflectionPlume {
    * @return the Class corresponding to className
    * @throws ClassNotFoundException if the class is not found
    */
+  // @SuppressWarnings("PMD.AvoidReassigningParameters")
   // The @ClassGetName annotation encourages proper use, even though this can take a
   // fully-qualified name (only for a non-array).
   public static Class<?> classForName(@ClassGetName String className)
       throws ClassNotFoundException {
-    Class<?> result = primitiveClasses.get(className);
+    Class<?> result = PRIMITIVE_CLASSES.get(className);
     if (result != null) {
       return result;
     }
@@ -131,7 +133,7 @@ public final class ReflectionPlume {
         try {
           return Class.forName(className);
         } catch (ClassNotFoundException ee) {
-          continue; // nothing to do
+          // nothing to do
         }
       }
     }
@@ -152,14 +154,14 @@ public final class ReflectionPlume {
 
     int offset = qualifiedName.lastIndexOf('.');
     if (offset == -1) {
-      return (qualifiedName);
+      return qualifiedName;
     }
-    return (qualifiedName.substring(offset + 1));
+    return qualifiedName.substring(offset + 1);
   }
 
   /**
    * Returns the class name, including outer classes but without the package. Uses "." as the
-   * separator between outer an inner classes, as in Java source code.
+   * separator between outer and inner classes, as in Java source code.
    *
    * @param c a class
    * @return the class name, including outer classes but without the package
@@ -170,23 +172,33 @@ public final class ReflectionPlume {
       return c.getSimpleName();
     }
 
-    StringBuilder result = new StringBuilder(c.getSimpleName());
-    while (enclosing != null) {
-      result.insert(0, enclosing.getSimpleName() + ".");
-      enclosing = enclosing.getEnclosingClass();
+    Deque<String> parts = new ArrayDeque<>();
+    Class<?> current = c;
+    while (current != null) {
+      parts.addFirst(current.getSimpleName());
+      current = current.getEnclosingClass();
     }
-    return result.toString();
+    return String.join(".", parts);
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// ClassLoader
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // ClassLoader
+  //
 
   /**
    * This static nested class has no purpose but to define defineClassFromFile.
    * ClassLoader.defineClass is protected, so I subclass ClassLoader in order to call defineClass.
    */
-  private static class PromiscuousLoader extends ClassLoader {
+  private static final class PromiscuousLoader extends ClassLoader {
+
+    /** A ClassLoader that can call {@code defineClassFromFile}. */
+    private static final PromiscuousLoader IT = new PromiscuousLoader();
+
+    /** Create a new PromiscuousLoader. */
+    private PromiscuousLoader() {
+      super();
+    }
+
     /**
      * Converts the bytes in a file into an instance of class Class, and also resolves (links) the
      * class. Delegates the real work to defineClass.
@@ -198,26 +210,20 @@ public final class ReflectionPlume {
      * @throws FileNotFoundException if the file does not exist
      * @throws IOException if there is trouble reading the file
      */
-    public Class<?> defineClassFromFile(@BinaryName String className, String pathname)
+    // @SuppressWarnings("PMD.PreserveStackTrace") // FileNotFoundException
+    private Class<?> defineClassFromFile(@BinaryName String className, String pathname)
         throws FileNotFoundException, IOException {
-      FileInputStream fi = new FileInputStream(pathname);
-      int numbytes = fi.available();
-      byte[] classBytes = new byte[numbytes];
-      int bytesRead = fi.read(classBytes);
-      fi.close();
-      if (bytesRead < numbytes) {
-        throw new Error(
-            String.format(
-                "Expected to read %d bytes from %s, got %d", numbytes, pathname, bytesRead));
+      byte[] classBytes;
+      try {
+        classBytes = Files.readAllBytes(Path.of(pathname));
+      } catch (java.nio.file.NoSuchFileException e) {
+        throw new FileNotFoundException(pathname);
       }
-      Class<?> return_class = defineClass(className, classBytes, 0, numbytes);
-      resolveClass(return_class); // link the class
-      return return_class;
+      Class<?> returnClass = defineClass(className, classBytes, 0, classBytes.length);
+      resolveClass(returnClass); // link the class
+      return returnClass;
     }
   }
-
-  /** A ClassLoader that can call defineClassFromFile. */
-  private static PromiscuousLoader thePromiscuousLoader = new PromiscuousLoader();
 
   /**
    * Converts the bytes in a file into an instance of class Class, and resolves (links) the class.
@@ -234,12 +240,12 @@ public final class ReflectionPlume {
   // Also throws UnsupportedClassVersionError and some other exceptions.
   public static Class<?> defineClassFromFile(@BinaryName String className, String pathname)
       throws FileNotFoundException, IOException {
-    return thePromiscuousLoader.defineClassFromFile(className, pathname);
+    return PromiscuousLoader.IT.defineClassFromFile(className, pathname);
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Classpath
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // Classpath
+  //
 
   // Perhaps abstract out the simpler addToPath from this
   /**
@@ -250,7 +256,6 @@ public final class ReflectionPlume {
   public static void addToClasspath(String dir) {
     // If the dir isn't on CLASSPATH, add it.
     String pathSep = System.getProperty("path.separator");
-    // what is the point of the "replace()" call?
     String cp = System.getProperty("java.class.path", ".").replace('\\', '/');
     StringTokenizer tokenizer = new StringTokenizer(cp, pathSep, false);
     boolean found = false;
@@ -267,37 +272,22 @@ public final class ReflectionPlume {
    *
    * @return the classpath as a multi-line string
    */
-  @SuppressWarnings("UnusedMethod") // This implementation works only on Java 8, not Java 11.
-  private static String classpathToStringJava8Only() {
-    StringJoiner result = new StringJoiner(System.lineSeparator());
-    ClassLoader cl = ClassLoader.getSystemClassLoader();
-    URL[] urls = ((URLClassLoader) cl).getURLs();
-    for (URL url : urls) {
-      result.add(url.getFile());
-    }
-    return result.toString();
-  }
-
-  /**
-   * Returns the classpath as a multi-line string.
-   *
-   * @return the classpath as a multi-line string
-   */
   public static String classpathToString() {
     return System.getProperty("java.class.path")
         .replace(File.pathSeparator, System.lineSeparator());
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Method
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // Method
+  //
 
   /**
    * Maps from a comma-delimited string of arg types, such as appears in a method signature, to an
    * array of Class objects, one for each arg type. Example keys include: "java.lang.String,
    * java.lang.String, java.lang.Class[]" and "int,int".
    */
-  static HashMap<String, Class<?>[]> args_seen = new HashMap<>();
+  // @SuppressWarnings("PMD.FieldDeclarationsShouldBeAtStartOfClass") // used only in one method
+  private static final @Modifiable Map<String, Class<?>[]> ARGS_SEEN = new ConcurrentHashMap<>();
 
   /**
    * Given a method signature, return the method.
@@ -305,9 +295,12 @@ public final class ReflectionPlume {
    * <p>Example calls are:
    *
    * <pre>
-   * UtilPlume.methodForName("org.plumelib.reflection.ReflectionPlume.methodForName(java.lang.String, java.lang.String, java.lang.Class[])")
-   * UtilPlume.methodForName("org.plumelib.reflection.ReflectionPlume.methodForName(java.lang.String,java.lang.String,java.lang.Class[])")
-   * UtilPlume.methodForName("java.lang.Math.min(int,int)")
+   * UtilP.methodForName(
+   *   "org.plumelib.reflection.ReflectionP.methodForName"
+   *   +"(java.lang.String, java.lang.String, java.lang.Class[])")
+   * UtilP.methodForName("org.plumelib.reflection.ReflectionP.methodForName"
+   *                         +"(java.lang.String,java.lang.String,java.lang.Class[])")
+   * UtilP.methodForName("java.lang.Math.min(int,int)")
    * </pre>
    *
    * @param method a method signature
@@ -316,7 +309,7 @@ public final class ReflectionPlume {
    * @throws NoSuchMethodException if the method is not found
    */
   public static Method methodForName(String method)
-      throws ClassNotFoundException, NoSuchMethodException, SecurityException {
+      throws ClassNotFoundException, NoSuchMethodException {
 
     int oparenpos = method.indexOf('(');
     int dotpos = method.lastIndexOf('.', oparenpos);
@@ -336,35 +329,37 @@ public final class ReflectionPlume {
     for (int i = cparenpos + 1; i < method.length(); i++) {
       if (!Character.isWhitespace(method.charAt(i))) {
         throw new Error(
-            "malformed method name should contain only whitespace following close paren");
+            "malformed method name should contain only whitespace following close paren: "
+                + method);
       }
     }
 
     @SuppressWarnings("signature") // throws exception if class does not exist
     @BinaryName String classname = method.substring(0, dotpos);
     String methodname = method.substring(dotpos + 1, oparenpos);
-    String all_argnames = method.substring(oparenpos + 1, cparenpos).trim();
-    Class<?>[] argclasses = args_seen.get(all_argnames);
+    String allArgnames = method.substring(oparenpos + 1, cparenpos).trim();
+    Class<?>[] argclasses = ARGS_SEEN.get(allArgnames);
     if (argclasses == null) {
       @BinaryName String[] argnames;
-      if (all_argnames.equals("")) {
+      if (allArgnames.isEmpty()) {
         argnames = new String[0];
       } else {
         @SuppressWarnings("signature") // string manipulation: splitting a method signature
-        @BinaryName String[] bnArgnames = all_argnames.split(" *, *");
+        @BinaryName String[] bnArgnames = allArgnames.split(" *, *");
         argnames = bnArgnames;
       }
 
-      @MonotonicNonNull Class<?>[] argclasses_tmp = new Class<?>[argnames.length];
+      @MonotonicNonNull Class<?>[] argclassesTmp = new Class<?>[argnames.length];
       for (int i = 0; i < argnames.length; i++) {
         @BinaryName String bnArgname = argnames[i];
         @ClassGetName String cgnArgname = Signatures.binaryNameToClassGetName(bnArgname);
-        argclasses_tmp[i] = classForName(cgnArgname);
+        argclassesTmp[i] = classForName(cgnArgname);
       }
       // TODO: Shouldn't this require a warning suppression?
-      Class<?>[] argclasses_res = (@NonNull Class<?>[]) argclasses_tmp;
-      argclasses = argclasses_res;
-      args_seen.put(all_argnames, argclasses_res);
+      // @SuppressWarnings("PMD.UnnecessaryCast") // bug in PMD: ignores type annotations
+      Class<?>[] argclassesRes = (@NonNull Class<?>[]) argclassesTmp;
+      argclasses = argclassesRes;
+      ARGS_SEEN.put(allArgnames, argclassesRes);
     }
     return methodForName(classname, methodname, argclasses);
   }
@@ -381,46 +376,51 @@ public final class ReflectionPlume {
    */
   public static Method methodForName(
       @BinaryName String classname, String methodname, Class<?>[] params)
-      throws ClassNotFoundException, NoSuchMethodException, SecurityException {
+      throws ClassNotFoundException, NoSuchMethodException {
 
     Class<?> c = Class.forName(classname);
-    Method m = c.getDeclaredMethod(methodname, params);
-    return m;
+    return c.getDeclaredMethod(methodname, params);
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Reflection
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // Reflection
+  //
 
   // TODO: add method invokeMethod; see
   // java/Translation/src/graph/tests/Reflect.java (but handle returning a
   // value).
 
-  // TODO: make this restore the access to its original value, such as private?
   /**
-   * Sets the given field, which may be final and/or private. Leaves the field accessible.
+   * Sets the given field, which may be final and/or private. Restores the field's original
+   * accessibility.
    *
    * @param o object in which to set the field; null iff the field is static
    * @param fieldName name of field to set
    * @param value new value of field; may be null iff the field is nullable
    * @throws NoSuchFieldException if the field does not exist in the object
    */
+  // @SuppressWarnings("PMD.AvoidAccessibilityAlteration")
   public static void setFinalField(Object o, String fieldName, @Interned Object value)
       throws NoSuchFieldException {
     Class<?> c = o.getClass();
     while (c != Object.class) { // Class is interned
-      // System.out.printf ("Setting field %s in %s%n", fieldName, c);
       try {
         Field f = c.getDeclaredField(fieldName);
-        f.setAccessible(true);
-        f.set(o, value);
+        @SuppressWarnings("deprecation") // No non-deprecated alternative to query accessible flag.
+        boolean originalAccessible = f.isAccessible();
+        try {
+          f.setAccessible(true);
+          f.set(o, value);
+        } finally {
+          f.setAccessible(originalAccessible);
+        }
         return;
       } catch (NoSuchFieldException e) {
         if (c.getSuperclass() == Object.class) { // Class is interned
           throw e;
         }
       } catch (IllegalAccessException e) {
-        throw new Error("This can't happen: " + e);
+        throw new Error("This can't happen", e);
       }
       c = c.getSuperclass();
       assert c != null : "@AssumeAssertion(nullness): c was not Object, so is not null now";
@@ -428,26 +428,31 @@ public final class ReflectionPlume {
     throw new NoSuchFieldException(fieldName);
   }
 
-  // TODO: make this restore the access to its original value, such as private?
   /**
-   * Reads the given field, which may be private. Leaves the field accessible. Use with care!
+   * Reads the given field, which may be private. Restores the field's original accessibility.
    *
-   * @param o object in which to set the field
-   * @param fieldName name of field to set
-   * @return new value of field
+   * @param o object in which to get the field
+   * @param fieldName name of field to get
+   * @return value of field
    * @throws NoSuchFieldException if the field does not exist in the object
    */
+  // @SuppressWarnings("PMD.AvoidAccessibilityAlteration")
   public static @Nullable Object getPrivateField(Object o, String fieldName)
       throws NoSuchFieldException {
     Class<?> c = o.getClass();
     while (c != Object.class) { // Class is interned
-      // System.out.printf ("Setting field %s in %s%n", fieldName, c);
       try {
         Field f = c.getDeclaredField(fieldName);
-        f.setAccessible(true);
-        return f.get(o);
+        @SuppressWarnings("deprecation") // No non-deprecated alternative to query accessible flag.
+        boolean originalAccessible = f.isAccessible();
+        try {
+          f.setAccessible(true);
+          return f.get(o);
+        } finally {
+          f.setAccessible(originalAccessible);
+        }
       } catch (IllegalAccessException e) {
-        throw new Error("This can't happen: " + e);
+        throw new Error("This can't happen", e);
       } catch (NoSuchFieldException e) {
         if (c.getSuperclass() == Object.class) { // Class is interned
           throw e;
@@ -493,9 +498,10 @@ public final class ReflectionPlume {
   /**
    * Returns the least upper bound of all the given classes.
    *
-   * @param classes a non-empty list of classes
+   * @param classes an array of classes
    * @param <T> the (inferred) least upper bound of the arguments
-   * @return the least upper bound of all the given classes
+   * @return the least upper bound of all the given classes, or null if the array is empty or all
+   *     its elements are null
    */
   public static <T> @Nullable Class<T> leastUpperBound(@Nullable Class<T>[] classes) {
     Class<T> result = null;
@@ -508,13 +514,13 @@ public final class ReflectionPlume {
   /**
    * Returns the least upper bound of the classes of the given objects.
    *
-   * @param objects a list of objects
+   * @param objects an array of objects
    * @param <T> the (inferred) least upper bound of the arguments
-   * @return the least upper bound of the classes of the given objects, or null if all arguments are
-   *     null
+   * @return the least upper bound of the classes of the given objects, or null if the array is
+   *     empty or all its elements are null
    */
   @SuppressWarnings("unchecked") // cast to Class<T>
-  public static <T> @Nullable Class<T> leastUpperBound(@PolyNull Object[] objects) {
+  public static <T> @Nullable Class<T> leastUpperBound(@PolyMustCall @PolyNull Object[] objects) {
     Class<T> result = null;
     for (Object obj : objects) {
       if (obj != null) {
@@ -527,13 +533,14 @@ public final class ReflectionPlume {
   /**
    * Returns the least upper bound of the classes of the given objects.
    *
-   * @param objects a non-empty list of objects
+   * @param objects a list of objects
    * @param <T> the (inferred) least upper bound of the arguments
-   * @return the least upper bound of the classes of the given objects, or null if all arguments are
-   *     null
+   * @return the least upper bound of the classes of the given objects, or null if the list is empty
+   *     or all its elements are null
    */
   @SuppressWarnings("unchecked") // cast to Class<T>
-  public static <T> @Nullable Class<T> leastUpperBound(List<? extends @Nullable Object> objects) {
+  public static <T> @Nullable Class<T> leastUpperBound(
+      List<? extends @MustCallUnknown @Nullable Object> objects) {
     Class<T> result = null;
     for (Object obj : objects) {
       if (obj != null) {

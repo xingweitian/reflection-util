@@ -1,8 +1,11 @@
 package org.plumelib.reflection;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Collections;
+import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.signature.qual.BinaryName;
 import org.checkerframework.checker.signature.qual.ClassGetName;
@@ -14,28 +17,25 @@ import org.checkerframework.checker.signature.qual.InternalForm;
 import org.junit.jupiter.api.Test;
 
 /** Test code for the Signatures class. */
-@SuppressWarnings({
-  "UseCorrectAssertInTests" // I don't see the problem with using `assert`
-})
 public final class TestSignatures {
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Accessing parts of types
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // Accessing parts of types
+  //
 
   /**
    * Returns the element type for the given type name, which results from removing all the array
    * brackets.
    */
   @Test
-  public void testGetArrayElementType() {
+  void test_getArrayElementType() {
     assertEquals("int", Signatures.getArrayElementType("int[][][]"));
     assertEquals("int", Signatures.getArrayElementType("int"));
   }
 
   /** Given a filename ending with ".class", return the binary name of the class. */
   @Test
-  public void testClassfilenameToBinaryName() {
+  void test_classfilenameToBinaryName() {
     assertEquals(
         "foo.bar.baz.Quux", Signatures.classfilenameToBinaryName("/foo/bar/baz/Quux.class"));
     assertEquals(
@@ -50,7 +50,7 @@ public final class TestSignatures {
 
   /** Given a filename ending with ".class", return the simple binary name of the class. */
   @Test
-  public void testClassfilenameToBaseName() {
+  void test_classfilenameToBaseName() {
     assertEquals("Quux", Signatures.classfilenameToBaseName("/foo/bar/baz/Quux.class"));
     assertEquals("Quux", Signatures.classfilenameToBaseName("foo/bar/baz/Quux.class"));
     assertEquals("Quux", Signatures.classfilenameToBaseName("Quux.class"));
@@ -59,29 +59,29 @@ public final class TestSignatures {
     assertEquals("Quux$22", Signatures.classfilenameToBaseName("Quux$22.class"));
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// String concatenations
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // String concatenations
+  //
 
   /*
    * Given a package name and a class name, combine them to form a qualified class name.
    */
   @Test
-  public void testAddPackage() {
+  void test_addPackage() {
     assertEquals("Foo", Signatures.addPackage(null, "Foo"));
     assertEquals("a.b.c.Foo", Signatures.addPackage("a.b.c", "Foo"));
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Type tests
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // Type tests
+  //
 
   /**
    * Returns true if the argument has the format of a BinaryName. The type it refers to might or
    * might not exist.
    */
   @Test
-  public void testIsBinaryName() {
+  void test_isBinaryName() {
     assertTrue(!Signatures.isBinaryName("int"));
     assertTrue(!Signatures.isBinaryName("int[][]"));
     assertTrue(Signatures.isBinaryName("java.lang.String"));
@@ -99,7 +99,7 @@ public final class TestSignatures {
    * might not exist.
    */
   @Test
-  public void testIsClassGetName() {
+  void test_isClassGetName() {
     assertTrue(Signatures.isClassGetName("int"));
     assertTrue(Signatures.isClassGetName("[[I"));
     assertTrue(!Signatures.isClassGetName("int[][]"));
@@ -111,8 +111,7 @@ public final class TestSignatures {
     assertTrue(!Signatures.isClassGetName("pkg.Outer$Inner[]"));
     assertTrue(Signatures.isClassGetName("[LMyClass;"));
     assertTrue(Signatures.isClassGetName("MyClass$22"));
-    // Commented out due to bug in Checker Framework.  Enable after CF version 3.0 is released.
-    // assertTrue(Signatures.isClassGetName("[LMyClass$22;"));
+    assertTrue(Signatures.isClassGetName("[LMyClass$22;"));
     assertTrue(Signatures.isClassGetName("java.lang.Integer"));
     assertTrue(Signatures.isClassGetName("[Ljava.lang.Integer;"));
     assertTrue(Signatures.isClassGetName("pkg.Outer$Inner"));
@@ -127,7 +126,7 @@ public final class TestSignatures {
    * it refers to might or might not exist.
    */
   @Test
-  public void testIsDotSeparatedIdentifiers() {
+  void test_isDotSeparatedIdentifiers() {
     assertTrue(!Signatures.isDotSeparatedIdentifiers("hello world"));
     assertTrue(!Signatures.isDotSeparatedIdentifiers("[[I"));
     assertTrue(!Signatures.isDotSeparatedIdentifiers("int"));
@@ -146,7 +145,7 @@ public final class TestSignatures {
    * might not exist.
    */
   @Test
-  public void testIsFqBinaryName() {
+  void test_isFqBinaryName() {
     assertTrue(!Signatures.isFqBinaryName("hello world"));
     assertTrue(!Signatures.isFqBinaryName("[[I"));
     assertTrue(Signatures.isFqBinaryName("int"));
@@ -164,29 +163,67 @@ public final class TestSignatures {
   }
 
   /**
-   * Returns true if the argument has the format of a FqBinaryName. The type it refers to might or
+   * A field descriptor for an array: {@code dims} copies of "[" followed by {@code base}.
+   *
+   * <p>Multidimensional field descriptors are constructed here at run time rather than written as
+   * source literals, to avoid a crash in the Checker Framework's literal annotator. Its bundled
+   * FieldDescriptorWithoutPackage regex predates the fix that makes strings such as "[[LMyClass;"
+   * match, so writing them as literals triggers a {@code BugInCF}.
+   *
+   * @param dims the number of array dimensions
+   * @param base the field descriptor of the element type
+   * @return a field descriptor for the array type
+   */
+  private static String nDimArray(@NonNegative int dims, String base) {
+    return "[".repeat(dims) + base;
+  }
+
+  /** Returns true if the argument has the format of a FieldDescriptorWithoutPackage. */
+  @Test
+  void test_isFieldDescriptorWithoutPackage() {
+    assertTrue(Signatures.isFieldDescriptorWithoutPackage("I"));
+    assertTrue(Signatures.isFieldDescriptorWithoutPackage("[[J"));
+    assertTrue(Signatures.isFieldDescriptorWithoutPackage("[LMyClass;"));
+    assertTrue(Signatures.isFieldDescriptorWithoutPackage("[LMyClass$22;"));
+    // Multidimensional arrays of unnamed-package classes (see nDimArray).
+    assertTrue(Signatures.isFieldDescriptorWithoutPackage(nDimArray(2, "LMyClass;")));
+    assertTrue(Signatures.isFieldDescriptorWithoutPackage(nDimArray(3, "LMyClass;")));
+    assertTrue(Signatures.isFieldDescriptorWithoutPackage(nDimArray(2, "LMyClass$22;")));
+    // Non-arrays of reference types are field descriptors, but not "without package" ones.
+    assertTrue(!Signatures.isFieldDescriptorWithoutPackage("LMyClass;"));
+    // A field descriptor whose element type has a package is not "without package".
+    assertTrue(!Signatures.isFieldDescriptorWithoutPackage("Ljava/lang/Object;"));
+    assertTrue(!Signatures.isFieldDescriptorWithoutPackage("[Ljava/lang/Object;"));
+    assertTrue(!Signatures.isFieldDescriptorWithoutPackage(nDimArray(2, "Ljava/lang/Object;")));
+    // Not field descriptors at all.
+    assertTrue(!Signatures.isFieldDescriptorWithoutPackage("int"));
+    assertTrue(!Signatures.isFieldDescriptorWithoutPackage("MyClass"));
+  }
+
+  /**
+   * Returns true if the argument has the format of an Identifier. The type it refers to might or
    * might not exist.
    */
   @Test
-  public void testIsIdentifier() {
+  void test_isIdentifier() {
     assertTrue(Signatures.isIdentifier("_"));
     assertTrue(Signatures.isIdentifier("Class$Inner"));
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Type conversions
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // Type conversions
+  //
 
   private void assertParseFqBinaryName(
       @FqBinaryName String typename, String classname, int dimensions) {
     Signatures.ClassnameAndDimensions cad =
         Signatures.ClassnameAndDimensions.parseFqBinaryName(typename);
-    assertEquals(classname, cad.classname);
-    assertEquals(dimensions, cad.dimensions);
+    assertEquals(classname, cad.classname());
+    assertEquals(dimensions, cad.dimensions());
   }
 
   @Test
-  public void testParseFqBinaryName() {
+  void test_parseFqBinaryName() {
     assertParseFqBinaryName("int", "int", 0);
     assertParseFqBinaryName("int[]", "int", 1);
     assertParseFqBinaryName("int[][]", "int", 2);
@@ -202,8 +239,16 @@ public final class TestSignatures {
   }
 
   @Test
-  public void testConversions() {
-    // Table from Checker Framework manual
+  void test_conversions() {
+    // Table from Checker Framework manual.  Order of arguments:
+    // @FqBinaryName String fqbn,
+    // @Nullable @FullyQualifiedName String fqn,
+    // @ClassGetName String cgn,
+    // @FieldDescriptor String fd,
+    // @Nullable @BinaryName String bn,
+    // @Nullable @InternalForm String iform,
+    // @Nullable @ClassGetSimpleName String cgsn) {
+
     checkTypeConversions("int", "int", "int", "I", null, null, "int");
     checkTypeConversions("int[][]", "int[][]", "[[I", "[[I", null, null, "int[][]");
     checkTypeConversions(
@@ -281,6 +326,10 @@ public final class TestSignatures {
     assertEquals(cgn, Signatures.fieldDescriptorToClassGetName(fd));
     if (bn != null) {
       assertEquals(bn, Signatures.fieldDescriptorToBinaryName(fd));
+      assertEquals(bn, Signatures.classGetNameToBinaryName(cgn));
+    }
+    if (fqn != null) {
+      assertEquals(fqn, Signatures.fieldDescriptorToFullyQualified(fd));
     }
     if (iform != null) {
       assertEquals(cgn, Signatures.internalFormToClassGetName(iform));
@@ -288,20 +337,32 @@ public final class TestSignatures {
     if (bn != null && iform != null) {
       assertEquals(bn, Signatures.internalFormToBinaryName(iform));
     }
+    if (bn != null && iform != null) {
+      assertEquals(iform, Signatures.binaryNameToInternalForm(bn));
+    }
     if (fqn != null && iform != null) {
       assertEquals(fqn, Signatures.internalFormToFullyQualified(iform));
     }
     if (cgsn != null && fqn != null) {
-      assertEquals(cgsn, ReflectionPlume.fullyQualifiedNameToSimpleName(fqn));
+      assertEquals(cgsn, ReflectionP.fullyQualifiedNameToSimpleName(fqn));
     }
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Method signatures, which combine multiple types
-  ///
+  // //////////////////////////////////////////////////////////////////////
+  // Method signatures, which combine multiple types
+  //
 
   @Test
-  public void testSignatureConversions() {
+  void test_signatureSplitting() {
+    assertArrayEquals(new String[0], Signatures.splitJavaArglist("()"));
+    assertArrayEquals(new String[] {"int"}, Signatures.splitJavaArglist("(int)"));
+
+    assertEquals(Collections.emptyList(), Signatures.splitJvmArglist("()"));
+    assertEquals(Collections.singletonList("I"), Signatures.splitJvmArglist("(I)"));
+  }
+
+  @Test
+  void test_signatureConversions() {
     // public static String arglistToJvm(String arglist)
     assertEquals("()", Signatures.arglistToJvm("()"));
     assertEquals("(I)", Signatures.arglistToJvm("(int)"));

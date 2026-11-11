@@ -1,17 +1,18 @@
 package org.plumelib.reflection;
 
 import java.io.File;
-import java.util.HashMap;
-import java.util.StringTokenizer;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.StringJoiner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.checkerframework.checker.index.qual.IndexFor;
-import org.checkerframework.checker.index.qual.Positive;
+import org.checkerframework.checker.index.qual.NonNegative;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.signature.qual.ArrayWithoutPackage;
 import org.checkerframework.checker.signature.qual.BinaryName;
 import org.checkerframework.checker.signature.qual.BinaryNameOrPrimitiveType;
-import org.checkerframework.checker.signature.qual.BinaryNameWithoutPackage;
 import org.checkerframework.checker.signature.qual.ClassGetName;
 import org.checkerframework.checker.signature.qual.ClassGetSimpleName;
 import org.checkerframework.checker.signature.qual.DotSeparatedIdentifiers;
@@ -24,31 +25,34 @@ import org.checkerframework.checker.signature.qual.FullyQualifiedName;
 import org.checkerframework.checker.signature.qual.Identifier;
 import org.checkerframework.checker.signature.qual.IdentifierOrPrimitiveType;
 import org.checkerframework.checker.signature.qual.InternalForm;
+import org.checkerframework.checker.signature.qual.MethodDescriptor;
 import org.checkerframework.checker.signature.qual.PrimitiveType;
 import org.checkerframework.framework.qual.EnsuresQualifierIf;
 
-// TODO: There are 6 major formats: https://checkerframework.org/manual/#signature-annotations
-// This should convert among all of them.  But perhaps just add functionality as the need comes up.
-
 /**
- * Conversion utilities between Java and JVM string formats, for types and signatures.
+ * Java specifies <a href="https://checkerframework.org/manual/#signature-annotations">6 major
+ * string formats to represent a type</a>. This class contains static methods to test strings,
+ * access their parts, and convert among the formats.
  *
- * <p>Also predicates for testing strings.
+ * <p>The class is not yet exhaustive; let the maintainers know if it lacks something you need.
  */
+// @SuppressWarnings("PMD.FieldDeclarationsShouldBeAtStartOfClass") // fields used by one method
 public final class Signatures {
 
-  /** The file-system-specific directory separator. */
-  private static final String dirSep = File.separator;
+  /** Do not instantiate. */
+  private Signatures() {
+    throw new UnsupportedOperationException("Do not instantiate");
+  }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Accessing parts of types
-  ///
+  // ///////////////////////////////////////////////////////////////////////////
+  // Accessing parts of types
+  //
 
   /**
    * Returns the element type for the given type name, which results from removing all the array
    * brackets.
    *
-   * @param fqBinaryName "a fully-qualified binary name" ({@code @FqBinaryNome})
+   * @param fqBinaryName "a fully-qualified binary name" ({@code @FqBinaryName})
    * @return the base element type of the argument, with all array brackets stripped
    */
   @SuppressWarnings("signature") // @FqBinaryName = @ClassGetName plus optional array brackets
@@ -65,19 +69,19 @@ public final class Signatures {
    * Given a filename ending with ".class", return the binary name of the class.
    *
    * @param classfilename the name of a classfile, relative to a directory on the CLASSPATH
-   * @return the basename of the classfile
+   * @return the binary name of the class
    */
-  @SuppressWarnings("signature:return.type.incompatible") // basename of a classfile is a Binaryname
+  @SuppressWarnings("signature:return") // basename of a classfile is a BinaryName
   public static @BinaryName String classfilenameToBinaryName(String classfilename) {
     if (!classfilename.endsWith(".class")) {
       throw new IllegalArgumentException("Bad class file name: " + classfilename);
     }
-    classfilename = classfilename.substring(0, classfilename.length() - 6);
-    if (classfilename.startsWith("/") || classfilename.startsWith(dirSep)) {
-      classfilename = classfilename.substring(1);
+    String result = classfilename.substring(0, classfilename.length() - 6);
+    if (result.startsWith("/") || result.startsWith(File.separator)) {
+      result = result.substring(1);
     }
     // This might misbehave for a Windows file whose name contains "/".
-    return classfilename.replace("/", ".").replace(dirSep, ".");
+    return result.replace("/", ".").replace(File.separator, ".");
   }
 
   /**
@@ -87,20 +91,21 @@ public final class Signatures {
    * @param classfilename the name of a classfile
    * @return the basename of the classfile
    */
-  @SuppressWarnings("signature:return.type.incompatible") // basename of a classfile is a Binaryname
+  @SuppressWarnings("signature:return") // basename of a classfile is a BinaryName
   public static @BinaryName String classfilenameToBaseName(String classfilename) {
     if (!classfilename.endsWith(".class")) {
       throw new IllegalArgumentException("Bad class file name: " + classfilename);
     }
-    @SuppressWarnings("index:assignment.type.incompatible") // "/" is not the last character
-    @IndexFor("classfilename") int start = classfilename.lastIndexOf("/") + 1;
+    @SuppressWarnings("index:assignment") // the separator is not the last character
+    @IndexFor("classfilename") int start =
+        Math.max(classfilename.lastIndexOf('/'), classfilename.lastIndexOf(File.separator)) + 1;
     int end = classfilename.length() - 6;
     return classfilename.substring(start, end);
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// String concatenations
-  ///
+  // ///////////////////////////////////////////////////////////////////////////
+  // String concatenations
+  //
 
   // These are not yet special-cased by the typechecker, so provide methods so clients don't have to
   // suppress warnings.
@@ -123,18 +128,18 @@ public final class Signatures {
       if (!isDotSeparatedIdentifiers(packagename)) {
         throw new Error("Bad packagename argument to addPackage: " + packagename);
       }
-      @SuppressWarnings("signature:assignment.type.incompatible") // string concatenation
+      @SuppressWarnings("signature:assignment") // string concatenation
       @BinaryName String result = packagename + "." + classname;
       return result;
     }
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Type tests (predicates)
-  ///
+  // ///////////////////////////////////////////////////////////////////////////
+  // Type tests (predicates)
+  //
 
   /**
-   * Returns true if the argument has the format of a ArrayWithoutPackage. The type it refers to
+   * Returns true if the argument has the format of an ArrayWithoutPackage. The type it refers to
    * might or might not exist.
    *
    * @param s a string
@@ -157,19 +162,6 @@ public final class Signatures {
   @EnsuresQualifierIf(result = true, expression = "#1", qualifier = BinaryName.class)
   public static boolean isBinaryName(String s) {
     return SignatureRegexes.BinaryNamePattern.matcher(s).matches();
-  }
-
-  /**
-   * Returns true if the argument has the format of a BinaryNameWithoutPackage. The type it refers
-   * to might or might not exist.
-   *
-   * @param s a string
-   * @return true if the string is a @BinaryNameWithoutPackage
-   */
-  @SuppressWarnings("signature")
-  @EnsuresQualifierIf(result = true, expression = "#1", qualifier = BinaryNameWithoutPackage.class)
-  public static boolean isBinaryNameWithoutPackage(String s) {
-    return SignatureRegexes.BinaryNameWithoutPackagePattern.matcher(s).matches();
   }
 
   /**
@@ -288,18 +280,24 @@ public final class Signatures {
    * Returns true if the argument has the format of a FqBinaryName. The type it refers to might or
    * might not exist.
    *
+   * <p>This method has the same semantics as {@link #isFullyQualifiedName}, because the syntactic
+   * formats are the same (though the interpretations of the strings differ).
+   *
    * @param s a string
    * @return true if the string is a @FqBinaryName
    */
   @SuppressWarnings("signature")
   @EnsuresQualifierIf(result = true, expression = "#1", qualifier = FqBinaryName.class)
   public static boolean isFqBinaryName(String s) {
-    return SignatureRegexes.FqBinaryNamePattern.matcher(s).matches();
+    return SignatureRegexes.FullyQualifiedNamePattern.matcher(s).matches();
   }
 
   /**
    * Returns true if the argument has the format of a FullyQualifiedName. The type it refers to
    * might or might not exist.
+   *
+   * <p>This method has the same semantics as {@link #isFqBinaryName}, because the syntactic formats
+   * are the same (though the interpretations of the strings differ).
    *
    * @param s a string
    * @return true if the string is a @FullyQualifiedName
@@ -311,7 +309,7 @@ public final class Signatures {
   }
 
   /**
-   * Returns true if the argument has the format of a Identifier. The type it refers to might or
+   * Returns true if the argument has the format of an Identifier. The type it refers to might or
    * might not exist.
    *
    * @param s a string
@@ -324,7 +322,7 @@ public final class Signatures {
   }
 
   /**
-   * Returns true if the argument has the format of a IdentifierOrPrimitiveType. The type it refers
+   * Returns true if the argument has the format of an IdentifierOrPrimitiveType. The type it refers
    * to might or might not exist.
    *
    * @param s a string
@@ -337,7 +335,7 @@ public final class Signatures {
   }
 
   /**
-   * Returns true if the argument has the format of a InternalForm. The type it refers to might or
+   * Returns true if the argument has the format of an InternalForm. The type it refers to might or
    * might not exist.
    *
    * @param s a string
@@ -361,29 +359,23 @@ public final class Signatures {
     return SignatureRegexes.PrimitiveTypePattern.matcher(s).matches();
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Type conversions
-  ///
+  // ///////////////////////////////////////////////////////////////////////////
+  // Type conversions
+  //
 
   /** Matches the "[][][]" at the end of a Java array type. */
   private static Pattern arrayBracketsPattern = Pattern.compile("(\\[\\])+$");
 
-  /** A representation of an array: A pair of class name and the number of array dimensions. */
-  public static class ClassnameAndDimensions {
-    /** The class name. It is a binary name or a primitive. */
-    public final @BinaryName String classname;
-    /** The number of array dimensions. */
-    public final int dimensions;
-    /**
-     * Create a new ClassnameAndDimensions.
-     *
-     * @param classname the class name: a binary name or a primitive
-     * @param dimensions the number of array dimensions
-     */
-    public ClassnameAndDimensions(@BinaryName String classname, int dimensions) {
-      this.classname = classname;
-      this.dimensions = dimensions;
-    }
+  /**
+   * A representation of an array: A pair of class name (a binary name or primitive) and the number
+   * of array dimensions.
+   *
+   * @param classname the class name: a binary name or a primitive
+   * @param dimensions the number of array dimensions
+   */
+  public record ClassnameAndDimensions(
+      @BinaryNameOrPrimitiveType String classname, int dimensions) {
+
     /**
      * Constructs a new ClassnameAndDimensions by parsing a fully-qualified binary name.
      *
@@ -393,28 +385,28 @@ public final class Signatures {
      */
     public static ClassnameAndDimensions parseFqBinaryName(@FqBinaryName String typename) {
       Matcher m = arrayBracketsPattern.matcher(typename);
-      @SuppressWarnings("signature:assignment.type.incompatible") // classname is a @ClassGetName
-      // for a non-array; equivalently, a binary name for a non-array
-      @BinaryName String classname = m.replaceFirst("");
+      @SuppressWarnings(
+          "signature:assignment" // classname is a @ClassGetName for a non-array; equivalently, a
+      // binary name for a non-array
+      )
+      @BinaryNameOrPrimitiveType String classname = m.replaceFirst("");
       int dimensions = (typename.length() - classname.length()) / 2;
       return new ClassnameAndDimensions(classname, dimensions);
     }
   }
 
   /** A map from Java primitive type name (such as "int") to field descriptor (such as "I"). */
-  private static HashMap<@PrimitiveType String, @FieldDescriptor String>
-      primitiveToFieldDescriptor = new HashMap<>(8);
-
-  static {
-    primitiveToFieldDescriptor.put("boolean", "Z");
-    primitiveToFieldDescriptor.put("byte", "B");
-    primitiveToFieldDescriptor.put("char", "C");
-    primitiveToFieldDescriptor.put("double", "D");
-    primitiveToFieldDescriptor.put("float", "F");
-    primitiveToFieldDescriptor.put("int", "I");
-    primitiveToFieldDescriptor.put("long", "J");
-    primitiveToFieldDescriptor.put("short", "S");
-  }
+  private static final Map<@PrimitiveType String, @FieldDescriptor String>
+      PRIMITIVE_TO_FIELD_DESCRIPTOR =
+          Map.of(
+              "boolean", "Z",
+              "byte", "B",
+              "char", "C",
+              "double", "D",
+              "float", "F",
+              "int", "I",
+              "long", "J",
+              "short", "S");
 
   /**
    * Convert a binary name to a field descriptor. For example, convert "java.lang.Object[]" to
@@ -429,14 +421,16 @@ public final class Signatures {
   @SuppressWarnings("signature") // conversion routine
   public static @FieldDescriptor String binaryNameToFieldDescriptor(@FqBinaryName String typename) {
     ClassnameAndDimensions cad = ClassnameAndDimensions.parseFqBinaryName(typename);
-    String result = primitiveToFieldDescriptor.get(cad.classname);
+    String result = PRIMITIVE_TO_FIELD_DESCRIPTOR.get(cad.classname);
     if (result == null) {
       result = "L" + cad.classname + ";";
     }
-    for (int i = 0; i < cad.dimensions; i++) {
-      result = "[" + result;
+    result = result.replace('.', '/');
+    if (cad.dimensions == 0) {
+      return result;
+    } else {
+      return "[".repeat(cad.dimensions) + result;
     }
-    return result.replace('.', '/');
   }
 
   /**
@@ -447,8 +441,9 @@ public final class Signatures {
    * @return name of the type, in field descriptor format
    * @throws IllegalArgumentException if primitiveName is not a valid primitive type name
    */
-  public static @FieldDescriptor String primitiveTypeNameToFieldDescriptor(String primitiveName) {
-    String result = primitiveToFieldDescriptor.get(primitiveName);
+  public static @FieldDescriptor String primitiveTypeNameToFieldDescriptor(
+      @PrimitiveType String primitiveName) {
+    String result = PRIMITIVE_TO_FIELD_DESCRIPTOR.get(primitiveName);
     if (result == null) {
       throw new IllegalArgumentException("Not the name of a primitive type: " + primitiveName);
     }
@@ -459,7 +454,8 @@ public final class Signatures {
    * Convert from a BinaryName to the format of {@link Class#getName()}.
    *
    * <p>There are no binary names for primitives or array types. Nonetheless, this method works for
-   * them. It converts "java.lang.Object[]" to "[Ljava.lang.Object;" or "int" to "int".
+   * them. It converts "java.lang.Object[]" to "[Ljava.lang.Object;", and it converts "int" to
+   * "int".
    *
    * @param bn the binary name to convert
    * @return the class name, in Class.getName format
@@ -479,12 +475,14 @@ public final class Signatures {
    * @param binaryName a type in binary name format
    * @return a fully-qualified name
    */
-  @SuppressWarnings("signature:return.type.incompatible") // implementation bug. There are binary
-  // names for anonymous classes, but no fully-qualified names for them.  Given a valid binary name
-  // "pkg.Outer$22", it produces "pkg.Outer.22" which is not a valid fully-qualified name.
+  @SuppressWarnings(
+      "signature:return" // implementation bug. There are binary names for anonymous classes, but no
+  // fully-qualified names for them.  Given a valid binary name "pkg.Outer$22", it produces
+  // "pkg.Outer.22" which is not a valid fully-qualified name.
+  )
   public static @FullyQualifiedName String binaryNameToFullyQualified(
       @BinaryName String binaryName) {
-    return binaryName.replaceAll("\\$", ".");
+    return binaryName.replace('$', '.');
   }
 
   /**
@@ -502,52 +500,103 @@ public final class Signatures {
     }
   }
 
-  /** A map from field descriptor (sach as "I") to Java primitive type (such as "int"). */
-  private static HashMap<String, String> fieldDescriptorToPrimitive = new HashMap<>(8);
-
-  static {
-    fieldDescriptorToPrimitive.put("Z", "boolean");
-    fieldDescriptorToPrimitive.put("B", "byte");
-    fieldDescriptorToPrimitive.put("C", "char");
-    fieldDescriptorToPrimitive.put("D", "double");
-    fieldDescriptorToPrimitive.put("F", "float");
-    fieldDescriptorToPrimitive.put("I", "int");
-    fieldDescriptorToPrimitive.put("J", "long");
-    fieldDescriptorToPrimitive.put("S", "short");
-  }
+  /** A map from field descriptor (such as "I") to Java primitive type (such as "int"). */
+  private static final Map<String, String> FIELD_DESCRIPTOR_TO_PRIMITIVE =
+      Map.of(
+          "Z", "boolean",
+          "B", "byte",
+          "C", "char",
+          "D", "double",
+          "F", "float",
+          "I", "int",
+          "J", "long",
+          "S", "short");
 
   /** Matches the "[[[" prefix of a field descriptor for an array. */
   private static Pattern fdArrayBracketsPattern = Pattern.compile("^\\[+");
 
   // does not convert "V" to "void".  Should it?
   /**
-   * Convert a field descriptor to a binary name. For example, convert "[Ljava/lang/Object;" to
-   * "java.lang.Object[]" or "I" to "int".
+   * Convert a field descriptor to a binary name. For example, convert "Ljava/util/Map$Entry;" to
+   * "java.util.Map$Entry".
    *
-   * @param typename name of the type, in JVML format
-   * @return name of the type, in Java format
+   * <p>Strictly speaking, there is no binary name for primitives and arrays. In those cases, the
+   * result is a "fully-qualified binary name" ({@code @}{@link FqBinaryName}). For example, this
+   * method converts "[Ljava/util/Map$Entry;" to "java.util.Map$Entry[]" and converts "I" to "int".
+   *
+   * @param typename a field descriptor (the name of a type in JVML format)
+   * @return the corresponding binary name
    */
   @SuppressWarnings("signature") // conversion routine
-  public static @BinaryName String fieldDescriptorToBinaryName(String typename) {
-    if (typename.equals("")) {
+  public static @BinaryName String fieldDescriptorToBinaryName(@FieldDescriptor String typename) {
+    if (typename.isEmpty()) {
       throw new Error("Empty string passed to fieldDescriptorToBinaryName");
+    }
+    Matcher m = fdArrayBracketsPattern.matcher(typename);
+    String classname = m.replaceFirst("");
+    String result;
+    if (classname.startsWith("L") && classname.endsWith(";")) {
+      result = classname.substring(1, classname.length() - 1);
+    } else {
+      result = FIELD_DESCRIPTOR_TO_PRIMITIVE.get(classname);
+      if (result == null) {
+        throw new Error(
+            "Malformed field descriptor should be \"L...;\" or a primitive: " + classname);
+      }
+    }
+    result = result.replace('/', '.');
+    int dimensions = typename.length() - classname.length();
+    if (dimensions == 0) {
+      return result;
+    } else {
+      return result + "[]".repeat(dimensions);
+    }
+  }
+
+  /**
+   * Convert a name in Class.getName format to a binary name. For example, convert
+   * "[Ljava.util.Map$Entry;" to "java.util.Map$Entry[]".
+   *
+   * @param typename a name in Class.getName format
+   * @return the corresponding binary name
+   */
+  @SuppressWarnings("signature") // conversion routine
+  public static @BinaryName String classGetNameToBinaryName(@ClassGetName String typename) {
+    if (typename.isEmpty()) {
+      throw new Error("Empty string passed to classGetNameToBinaryName");
     }
     Matcher m = fdArrayBracketsPattern.matcher(typename);
     String classname = m.replaceFirst("");
     int dimensions = typename.length() - classname.length();
     String result;
-    if (classname.startsWith("L") && classname.endsWith(";")) {
-      result = classname.substring(1, classname.length() - 1);
+    if (dimensions == 0) {
+      return classname;
     } else {
-      result = fieldDescriptorToPrimitive.get(classname);
-      if (result == null) {
-        throw new Error("Malformed base class: " + classname);
+      if (classname.startsWith("L") && classname.endsWith(";")) {
+        result = classname.substring(1, classname.length() - 1);
+      } else {
+        result = FIELD_DESCRIPTOR_TO_PRIMITIVE.get(classname);
+        if (result == null) {
+          throw new Error(
+              "Malformed Class.getName array base type should be \"L...;\" or a primitive: "
+                  + classname);
+        }
       }
+      // dimensions != 0, per `if` test above.
+      return result + "[]".repeat(dimensions);
     }
-    for (int i = 0; i < dimensions; i++) {
-      result += "[]";
-    }
-    return result.replace('/', '.');
+  }
+
+  /**
+   * Convert a field descriptor to a fully-qualified name. For example, convert
+   * "[Ljava/util/Map$Entry;" to "java.util.Map.Entry[]" or "I" to "int".
+   *
+   * @param typename a field descriptor (the name of a type in JVML format)
+   * @return the corresponding fully-qualified name (what you would write in Java source code)
+   */
+  public static @FullyQualifiedName String fieldDescriptorToFullyQualified(
+      @FieldDescriptor String typename) {
+    return binaryNameToFullyQualified(fieldDescriptorToBinaryName(typename));
   }
 
   /**
@@ -561,17 +610,38 @@ public final class Signatures {
   }
 
   /**
-   * Given a class name in internal form, return it in as a binary name.
+   * Given a class name in internal form, return it as a binary name.
    *
    * @param internalForm a class name in internal form
-   * @return the class name sa a binary name
+   * @return the class name as a binary name
    */
   public static @BinaryName String internalFormToBinaryName(@InternalForm String internalForm) {
     return internalForm.replace('/', '.');
   }
 
   /**
-   * Given a class name in internal form, return it in as a fully-qualified name.
+   * Given a class name in binary name form, return it in internal form.
+   *
+   * @param binaryName a class name in binary name form
+   * @return the class name in internal form
+   */
+  public static @InternalForm String binaryNameToInternalForm(@BinaryName String binaryName) {
+    return binaryName.replace('.', '/');
+  }
+
+  /**
+   * Given a class name in internal form, return it as dot-separated identifiers.
+   *
+   * @param internalForm a class name in internal form
+   * @return the class name as dot-separated identifiers
+   */
+  public static @DotSeparatedIdentifiers String internalFormToDotSeparatedIdentifiers(
+      @InternalForm String internalForm) {
+    return internalForm.replace('/', '.');
+  }
+
+  /**
+   * Given a class name in internal form, return it as a fully-qualified name.
    *
    * @param internalForm a type in internal form
    * @return a fully-qualified name
@@ -581,9 +651,33 @@ public final class Signatures {
     return binaryNameToFullyQualified(internalFormToBinaryName(internalForm));
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  /// Method signatures, which combine multiple types
-  ///
+  // ///////////////////////////////////////////////////////////////////////////
+  // Method signatures, which combine multiple types
+  //
+
+  /** The pattern that separates arguments in a Java argument string. */
+  private static Pattern commaSeparator = Pattern.compile(" *, *");
+
+  /**
+   * Split a fully-qualified argument list from Java format into an array of Java-format types. For
+   * example, convert "(java.lang.Integer[], int, java.lang.Integer[][])" to ["java.lang.Integer[]",
+   * "int", "java.lang.Integer[][]"].
+   *
+   * @param javaArglist an argument list, in Java format
+   * @return argument list, in Java format
+   */
+  @SuppressWarnings("signature:return") // string manipulation
+  public static @BinaryName String[] splitJavaArglist(String javaArglist) {
+    if (!(javaArglist.startsWith("(") && javaArglist.endsWith(")"))) {
+      throw new Error("Malformed arglist: " + javaArglist);
+    }
+    // Remove parentheses and space adjacent to them
+    String withoutParens = javaArglist.substring(1, javaArglist.length() - 1).trim();
+    if (withoutParens.isEmpty()) {
+      return new String[0];
+    }
+    return commaSeparator.split(withoutParens);
+  }
 
   /**
    * Convert a fully-qualified argument list from Java format to JVML format. For example, convert
@@ -597,16 +691,64 @@ public final class Signatures {
     if (!(arglist.startsWith("(") && arglist.endsWith(")"))) {
       throw new Error("Malformed arglist: " + arglist);
     }
-    String result = "(";
-    String commaSepArgs = arglist.substring(1, arglist.length() - 1);
-    StringTokenizer argsTokenizer = new StringTokenizer(commaSepArgs, ",", false);
-    while (argsTokenizer.hasMoreTokens()) {
-      @SuppressWarnings("signature") // substring
-      @BinaryName String arg = argsTokenizer.nextToken().trim();
-      result += binaryNameToFieldDescriptor(arg);
+    StringJoiner result = new StringJoiner("", "(", ")");
+    for (@BinaryName String javaArg : splitJavaArglist(arglist)) {
+      result.add(binaryNameToFieldDescriptor(javaArg));
     }
-    result += ")";
-    // System.out.println("arglistToJvm: " + arglist + " => " + result);
+    return result.toString();
+  }
+
+  /**
+   * Split an argument list from JVML format into an array of JVML format types. For example,
+   * convert "([Ljava/lang/Integer;I[[Ljava/lang/Integer;)" to ["[Ljava/lang/Integer;", "I",
+   * "[[Ljava/lang/Integer;"].
+   *
+   * @param jvmArglist an argument list, in JVML format
+   * @return argument list, in JVML format
+   */
+  // @SuppressWarnings("PMD.AvoidReassigningParameters")
+  public static List<@FieldDescriptor String> splitJvmArglist(String jvmArglist) {
+    if (!(jvmArglist.startsWith("(") && jvmArglist.endsWith(")"))) {
+      throw new Error("Malformed arglist: " + jvmArglist);
+    }
+    // Remove parentheses.  (There should be no spaces abutting them.)
+    jvmArglist = jvmArglist.substring(1, jvmArglist.length() - 1);
+
+    List<@FieldDescriptor String> result = new ArrayList<>();
+
+    @NonNegative int pos = 0;
+    while (pos < jvmArglist.length()) {
+      int nonarrayPos = pos;
+      while (jvmArglist.charAt(nonarrayPos) == '[') {
+        nonarrayPos++;
+        if (nonarrayPos >= jvmArglist.length()) {
+          throw new Error("Malformed arglist: " + jvmArglist);
+        }
+      }
+      char c = jvmArglist.charAt(nonarrayPos);
+      if (c == 'L') {
+        int semicolonPos = jvmArglist.indexOf(';', nonarrayPos);
+        if (semicolonPos == -1) {
+          throw new Error("Malformed arglist: " + jvmArglist);
+        }
+        @SuppressWarnings("signature:assignment") // string manipulation
+        @FieldDescriptor String fieldDescriptor = jvmArglist.substring(pos, semicolonPos + 1);
+        if (!isFieldDescriptor(fieldDescriptor)) {
+          throw new Error("Malformed arg " + fieldDescriptor + " in arglist: " + jvmArglist);
+        }
+        result.add(fieldDescriptor);
+        pos = semicolonPos + 1;
+      } else {
+        String primitiveFd = jvmArglist.substring(nonarrayPos, nonarrayPos + 1);
+        if (!isFieldDescriptorForPrimitive(primitiveFd)) {
+          throw new Error("Malformed arg " + primitiveFd + " in arglist: " + jvmArglist);
+        }
+        @SuppressWarnings("signature:assignment") // string manipulation
+        @FieldDescriptor String fieldDescriptor = jvmArglist.substring(pos, nonarrayPos + 1);
+        result.add(fieldDescriptor);
+        pos = nonarrayPos + 1;
+      }
+    }
     return result;
   }
 
@@ -619,41 +761,26 @@ public final class Signatures {
    * @return argument list, in Java format
    */
   public static String arglistFromJvm(String arglist) {
-    if (!(arglist.startsWith("(") && arglist.endsWith(")"))) {
-      throw new Error("Malformed arglist: " + arglist);
+
+    List<@FieldDescriptor String> args = splitJvmArglist(arglist);
+
+    StringJoiner result = new StringJoiner(", ", "(", ")");
+    for (@FieldDescriptor String arg : args) {
+      result.add(fieldDescriptorToBinaryName(arg));
     }
-    String result = "(";
-    @Positive int pos = 1;
-    while (pos < arglist.length() - 1) {
-      if (pos > 1) {
-        result += ", ";
-      }
-      int nonarrayPos = pos;
-      while (arglist.charAt(nonarrayPos) == '[') {
-        nonarrayPos++;
-        if (nonarrayPos >= arglist.length()) {
-          throw new Error("Malformed arglist: " + arglist);
-        }
-      }
-      char c = arglist.charAt(nonarrayPos);
-      if (c == 'L') {
-        int semicolonPos = arglist.indexOf(';', nonarrayPos);
-        if (semicolonPos == -1) {
-          throw new Error("Malformed arglist: " + arglist);
-        }
-        String fieldDescriptor = arglist.substring(pos, semicolonPos + 1);
-        result += fieldDescriptorToBinaryName(fieldDescriptor);
-        pos = semicolonPos + 1;
-      } else {
-        String maybe = fieldDescriptorToBinaryName(arglist.substring(pos, nonarrayPos + 1));
-        if (maybe == null) {
-          // return null;
-          throw new Error("Malformed arglist: " + arglist);
-        }
-        result += maybe;
-        pos = nonarrayPos + 1;
-      }
-    }
-    return result + ")";
+    return result.toString();
+  }
+
+  /**
+   * Returns the return type of the given method descriptor, or null if the method is void.
+   *
+   * @param methodDescriptor a method descriptor
+   * @return the return type of the given method descriptor, or null if the method is void
+   */
+  public static @Nullable @FieldDescriptor String methodDescriptorToReturnType(
+      @MethodDescriptor String methodDescriptor) {
+    @SuppressWarnings("signature:assignment") // string manipulation
+    @FieldDescriptor String result = methodDescriptor.substring(methodDescriptor.indexOf(')') + 1);
+    return result.equals("V") ? null : result;
   }
 }
